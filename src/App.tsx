@@ -1,14 +1,38 @@
+import { useEffect } from "react";
 import AuthWrapper from "./AuthWrapper";
 import NetworkGraph from "./components/NetworkGraph";
 import { useStore } from "./store";
 import { supabase } from "./supabaseClient";
 
 export default function App() {
-  // We grab the userId from our Zustand store (just in case we need it later)
   const userId = useStore((state) => state.userId);
+  const currentGraphId = useStore((state) => state.currentGraphId);
+  const setGraphId = useStore((state) => state.setGraphId);
+
+  // Fetch the user's default graph when they log in
+  useEffect(() => {
+    async function fetchDefaultGraph() {
+      if (userId && !currentGraphId) {
+        const { data, error } = await supabase
+          .from('graphs')
+          .select('id')
+          .eq('owner_id', userId)
+          .limit(1)
+          .single();
+          
+        if (data) {
+          setGraphId(data.id);
+        } else if (error) {
+          console.error("Error fetching graph:", error);
+        }
+      }
+    }
+    fetchDefaultGraph();
+  }, [userId, currentGraphId, setGraphId]);
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
+    setGraphId(null); // Clear state on logout
   };
 
   return (
@@ -19,7 +43,9 @@ export default function App() {
         <div className="absolute top-4 left-4 z-10 flex items-center gap-4 bg-white p-4 rounded-xl shadow-md border border-gray-100">
            <div>
              <h1 className="font-bold text-gray-800">My Network</h1>
-             <p className="text-xs text-gray-500">Sigma.js Canvas Active</p>
+             <p className="text-xs text-gray-500">
+               {currentGraphId ? "Live Database Connected" : "Loading graph..."}
+             </p>
            </div>
            <button 
              onClick={handleLogout}
@@ -30,9 +56,9 @@ export default function App() {
         </div>
 
         {/* GRAPH CONTAINER */}
-        {/* We use cursor-grab so it feels like a draggable map */}
         <div className="w-full h-full cursor-grab active:cursor-grabbing">
-          <NetworkGraph />
+          {/* We only render the canvas once we have successfully found the Graph ID */}
+          {currentGraphId && <NetworkGraph />}
         </div>
         
       </div>

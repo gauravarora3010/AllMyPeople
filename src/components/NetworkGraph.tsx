@@ -6,6 +6,28 @@ import { supabase } from "../supabaseClient";
 import { useStore } from "../store";
 import { generateInitialsImage, generateProfileWithBorder, getGenderColor } from "../utils/imageUtils";
 
+// Simple helper to pluralize labels
+const pluralize = (word: string) => {
+  if (!word) return "";
+  const lower = word.toLowerCase();
+  
+  // Custom cases for common relationship terms
+  if (lower === "child") return "Children";
+  if (lower === "person") return "People";
+  if (lower === "man") return "Men";
+  if (lower === "woman") return "Women";
+  
+  // Standard pluralization rules
+  if (lower.endsWith('s')) return word; 
+  if (lower.endsWith('y') && !['a', 'e', 'i', 'o', 'u'].includes(lower.charAt(lower.length - 2))) {
+    return word.slice(0, -1) + 'ies';
+  }
+  if (lower.endsWith('ch') || lower.endsWith('sh') || lower.endsWith('x') || lower.endsWith('z')) {
+    return word + 'es';
+  }
+  return word + 's';
+};
+
 const GraphManager = () => {
   const sigma = useSigma();
   const registerEvents = useRegisterEvents();
@@ -130,7 +152,7 @@ const GraphManager = () => {
           size: targetSize,
           label: node.full_name || "Unknown",
           color: finalColor,
-          type: "image",
+          type: "image", // Safely falls back to standard rendering if the image program fails
           image: fallbackImage,
         });
       } else {
@@ -166,7 +188,7 @@ const GraphManager = () => {
     // Clean up any nodes that were deleted from the database
     existingNodes.forEach(nodeId => graph.dropNode(nodeId));
 
-    // REBUILD EDGES (Edges are lightweight, so we can clear them to easily flip the arrows)
+    // REBUILD EDGES
     graph.clearEdges();
     
     edges.forEach((edge) => {
@@ -183,7 +205,14 @@ const GraphManager = () => {
         if (!selectedNodeId) {
           const forward = edge.label || edge.category;
           const backward = edge.reverse_label;
-          displayLabel = backward ? `${forward} / ${backward}` : forward;
+          
+          // SMART PLURALIZATION CHECK
+          if (backward && forward.trim().toLowerCase() === backward.trim().toLowerCase()) {
+             displayLabel = pluralize(forward.trim());
+          } else {
+             displayLabel = backward ? `${forward} / ${backward}` : forward;
+          }
+
         } else if (sourceStr === selectedNodeId || targetStr === selectedNodeId) {
           isSelectedEdge = true;
           if (selectedNodeId === targetStr) {
@@ -211,17 +240,39 @@ const GraphManager = () => {
   return null;
 };
 
-// STATIC SETTINGS MOVED OUTSIDE THE COMPONENT
-const sigmaSettings = {
-  nodeProgramClasses: { image: createNodeImageProgram() },
-  defaultNodeType: "image",
-  renderEdgeLabels: true,
-  edgeLabelSize: 14, 
-  edgeLabelColor: { color: "#4b5563" },
-  defaultEdgeType: "line"
-};
+// Module-level cache ensures WebGL context is requested strictly ONCE per page load.
+let cachedImageProgram: any = null;
 
 export default function NetworkGraph() {
+  const [sigmaSettings, setSigmaSettings] = useState<any>(null);
+
+  useEffect(() => {
+    if (!cachedImageProgram) {
+      try {
+        cachedImageProgram = createNodeImageProgram({
+          maxTextureSize: 2048,
+          padding: 0
+        });
+      } catch (error) {
+        console.warn("WebGL node image program failed to initialize. Falling back to default rendering.", error);
+      }
+    }
+
+    setSigmaSettings({
+      nodeProgramClasses: cachedImageProgram ? { image: cachedImageProgram } : {},
+      defaultNodeType: cachedImageProgram ? "image" : "circle",
+      renderEdgeLabels: true,
+      edgeLabelSize: 14, 
+      edgeLabelColor: { color: "#4b5563" },
+      defaultEdgeType: "line",
+      allowInvalidContainer: true
+    });
+  }, []);
+
+  if (!sigmaSettings) {
+    return null;
+  }
+
   return (
     <SigmaContainer
       style={{ height: "100%", width: "100%" }}

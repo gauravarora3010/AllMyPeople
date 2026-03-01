@@ -72,10 +72,10 @@ export default function App() {
             {!selectedNodeId ? (
               <button
                 onClick={() => openNodeModal('add')}
-                className="w-14 h-14 bg-blue-600 rounded-full shadow-lg flex items-center justify-center text-white text-3xl hover:bg-blue-700 hover:scale-105 transition-transform"
+                className="px-5 py-3 bg-blue-600 rounded-full shadow-lg flex items-center gap-2 text-white font-semibold hover:bg-blue-700 hover:scale-105 transition-transform"
                 title="Add Person"
               >
-                +
+                <span>➕</span> Add Person
               </button>
             ) : (
               /* If a node IS selected, show View, Connect, and Edit buttons */

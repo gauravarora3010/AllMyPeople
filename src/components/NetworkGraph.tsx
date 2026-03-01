@@ -11,13 +11,11 @@ const pluralize = (word: string) => {
   if (!word) return "";
   const lower = word.toLowerCase();
   
-  // Custom cases for common relationship terms
   if (lower === "child") return "Children";
   if (lower === "person") return "People";
   if (lower === "man") return "Men";
   if (lower === "woman") return "Women";
   
-  // Standard pluralization rules
   if (lower.endsWith('s')) return word; 
   if (lower.endsWith('y') && !['a', 'e', 'i', 'o', 'u'].includes(lower.charAt(lower.length - 2))) {
     return word.slice(0, -1) + 'ies';
@@ -42,7 +40,7 @@ const GraphManager = () => {
   
   const layoutCache = useRef(new Map<string, {x: number, y: number}>());
   
-  // A memory cache so we never reload an image that is already on the screen!
+  // Cache tracks visual updates so we don't infinitely redraw
   const renderedPhotos = useRef(new Map<string, string>());
 
   useEffect(() => {
@@ -117,7 +115,6 @@ const GraphManager = () => {
       });
     }
 
-    // Keep track of what is already on the canvas so we can delete old ones
     const existingNodes = new Set(graph.nodes());
 
     nodes.forEach((node) => {
@@ -145,33 +142,33 @@ const GraphManager = () => {
 
       // SURGICAL NODE UPDATES
       if (!graph.hasNode(nodeIdStr)) {
-        // Only create the node if it literally doesn't exist yet
         const fallbackImage = generateInitialsImage(node.full_name, node.sex);
         graph.addNode(nodeIdStr, {
           x, y,
           size: targetSize,
           label: node.full_name || "Unknown",
           color: finalColor,
-          type: "image", // Safely falls back to standard rendering if the image program fails
+          type: "image",
           image: fallbackImage,
         });
       } else {
-        // If it exists, just smoothly update the visuals! No flickering!
         graph.setNodeAttribute(nodeIdStr, "size", targetSize);
         graph.setNodeAttribute(nodeIdStr, "color", finalColor);
+        graph.setNodeAttribute(nodeIdStr, "label", node.full_name || "Unknown");
         graph.setNodeAttribute(nodeIdStr, "x", x);
         graph.setNodeAttribute(nodeIdStr, "y", y);
       }
 
-      // SMART IMAGE CACHING
-      const currentPhotoUrl = node.photo_url || "";
-      const previouslyRenderedUrl = renderedPhotos.current.get(nodeIdStr);
+      // SMART IMAGE CACHING - FIXED: Now tracks URL, Sex, AND Name!
+      // If any of these 3 change, it instantly regenerates the canvas image
+      const currentCacheKey = `${node.photo_url || ""}::${node.sex}::${node.full_name}`;
+      const previousCacheKey = renderedPhotos.current.get(nodeIdStr);
 
-      if (currentPhotoUrl !== previouslyRenderedUrl) {
-        renderedPhotos.current.set(nodeIdStr, currentPhotoUrl); 
+      if (currentCacheKey !== previousCacheKey) {
+        renderedPhotos.current.set(nodeIdStr, currentCacheKey); 
         
-        if (currentPhotoUrl) {
-          generateProfileWithBorder(currentPhotoUrl, node.sex).then((finalImageDataUrl) => {
+        if (node.photo_url) {
+          generateProfileWithBorder(node.photo_url, node.sex).then((finalImageDataUrl) => {
             if (graph.hasNode(nodeIdStr)) {
               graph.setNodeAttribute(nodeIdStr, "image", finalImageDataUrl);
             }
@@ -185,10 +182,8 @@ const GraphManager = () => {
       }
     });
 
-    // Clean up any nodes that were deleted from the database
     existingNodes.forEach(nodeId => graph.dropNode(nodeId));
 
-    // REBUILD EDGES
     graph.clearEdges();
     
     edges.forEach((edge) => {
@@ -206,7 +201,6 @@ const GraphManager = () => {
           const forward = edge.label || edge.category;
           const backward = edge.reverse_label;
           
-          // SMART PLURALIZATION CHECK
           if (backward && forward.trim().toLowerCase() === backward.trim().toLowerCase()) {
              displayLabel = pluralize(forward.trim());
           } else {

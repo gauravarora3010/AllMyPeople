@@ -5,6 +5,7 @@ import Sidebar from "./components/Sidebar";
 import NodeDetailsModal from "./components/NodeDetailsModal"; 
 import AddEdgeModal from "./components/AddEdgeModal";
 import ViewNodeModal from "./components/ViewNodeModal";
+import BulkAddModal from "./components/BulkAddModal"; // NEW
 import { useStore } from "./store";
 import { supabase } from "./supabaseClient";
 
@@ -16,7 +17,8 @@ export default function App() {
     toggleSidebar, 
     openNodeModal, 
     toggleEdgeModal, 
-    toggleViewModal, 
+    toggleViewModal,
+    toggleBulkAddModal, // NEW
     selectedNodeId 
   } = useStore();
 
@@ -63,20 +65,30 @@ export default function App() {
         <NodeDetailsModal />
         <AddEdgeModal />
         <ViewNodeModal />
+        <BulkAddModal /> {/* NEW */}
 
         {/* FLOATING ACTION BUTTONS (CONTEXTUAL) */}
         {currentGraphId && (
           <div className="absolute bottom-8 right-8 z-10 flex flex-col gap-3 items-end">
             
-            {/* If NO node is selected, show the standard Add button */}
+            {/* If NO node is selected, show Add Person & Bulk Add buttons */}
             {!selectedNodeId ? (
-              <button
-                onClick={() => openNodeModal('add')}
-                className="px-5 py-3 bg-blue-600 rounded-full shadow-lg flex items-center gap-2 text-white font-semibold hover:bg-blue-700 hover:scale-105 transition-transform"
-                title="Add Person"
-              >
-                <span>➕</span> Add Person
-              </button>
+              <>
+                <button
+                  onClick={toggleBulkAddModal}
+                  className="px-5 py-3 bg-teal-600 rounded-full shadow-lg flex items-center gap-2 text-white font-semibold hover:bg-teal-700 hover:scale-105 transition-transform"
+                  title="Bulk Add People"
+                >
+                  <span>📝</span> Bulk Add
+                </button>
+                <button
+                  onClick={() => openNodeModal('add')}
+                  className="px-5 py-3 bg-blue-600 rounded-full shadow-lg flex items-center gap-2 text-white font-semibold hover:bg-blue-700 hover:scale-105 transition-transform"
+                  title="Add Single Person"
+                >
+                  <span>➕</span> Add Person
+                </button>
+              </>
             ) : (
               /* If a node IS selected, show View, Connect, and Edit buttons */
               <>

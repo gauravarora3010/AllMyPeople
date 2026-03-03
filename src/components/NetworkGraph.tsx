@@ -125,16 +125,30 @@ const GraphManager = () => {
       const isNeighbor = connectedNodeIds.has(nodeIdStr);
       const isDimmed = selectedNodeId !== null && !isSelected && !isNeighbor;
 
+      // ---- AUTO-HEAL LEGACY COORDINATES ----
+      let dbX = node.layout_x;
+      let dbY = node.layout_y;
+      
+      // If a node is trapped in the old 0-10 microscopic bounding box, flag it for rescue
+      const isLegacyTrapped = (dbX !== null && dbX >= 0 && dbX <= 10 && dbY !== null && dbY >= 0 && dbY <= 10);
+
       let x, y;
-      if (layoutCache.current.has(nodeIdStr)) {
+      if (layoutCache.current.has(nodeIdStr) && !isLegacyTrapped) {
         const cached = layoutCache.current.get(nodeIdStr)!;
         x = cached.x;
         y = cached.y;
       } else {
-        x = node.layout_x ?? (Math.random() * 10);
-        y = node.layout_y ?? (Math.random() * 10);
+        // Explode legacy nodes into the new 1000x1000 scale, otherwise assign random for purely new nulls
+        x = isLegacyTrapped ? ((Math.random() * 1000) - 500) : (dbX ?? ((Math.random() * 1000) - 500));
+        y = isLegacyTrapped ? ((Math.random() * 1000) - 500) : (dbY ?? ((Math.random() * 1000) - 500));
         layoutCache.current.set(nodeIdStr, { x, y });
+        
+        // Save the rescued coordinates to Supabase so they don't get trapped again on refresh!
+        if (isLegacyTrapped || dbX === null) {
+           supabase.from("nodes").update({ layout_x: x, layout_y: y }).eq("id", node.id).then();
+        }
       }
+      // --------------------------------------
 
       const baseColor = getGenderColor(node.sex);
       const finalColor = isDimmed ? baseColor + "80" : baseColor;
@@ -159,8 +173,7 @@ const GraphManager = () => {
         graph.setNodeAttribute(nodeIdStr, "y", y);
       }
 
-      // SMART IMAGE CACHING - FIXED: Now tracks URL, Sex, AND Name!
-      // If any of these 3 change, it instantly regenerates the canvas image
+      // SMART IMAGE CACHING - Tracks URL, Sex, AND Name!
       const currentCacheKey = `${node.photo_url || ""}::${node.sex}::${node.full_name}`;
       const previousCacheKey = renderedPhotos.current.get(nodeIdStr);
 

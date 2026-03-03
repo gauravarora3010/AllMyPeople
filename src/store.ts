@@ -9,7 +9,8 @@ interface AppState {
   isNodeModalOpen: boolean;
   nodeModalMode: 'add' | 'edit';
   isEdgeModalOpen: boolean; 
-  isViewModalOpen: boolean; // NEW: Controls the View Details screen
+  isViewModalOpen: boolean;
+  isBulkAddModalOpen: boolean; // NEW
   refreshKey: number;
 
   // Canvas State
@@ -22,7 +23,8 @@ interface AppState {
   openNodeModal: (mode: 'add' | 'edit') => void;
   closeNodeModal: () => void;
   toggleEdgeModal: () => void;
-  toggleViewModal: () => void; // NEW
+  toggleViewModal: () => void;
+  toggleBulkAddModal: () => void; // NEW
   setSelectedNodeId: (id: string | null) => void;
   triggerRefresh: () => void;
 }
@@ -35,6 +37,7 @@ export const useStore = create<AppState>((set) => ({
   nodeModalMode: 'add',
   isEdgeModalOpen: false,
   isViewModalOpen: false,
+  isBulkAddModalOpen: false, // NEW
   refreshKey: 0,
   selectedNodeId: null,
 
@@ -45,6 +48,7 @@ export const useStore = create<AppState>((set) => ({
   closeNodeModal: () => set({ isNodeModalOpen: false }),
   toggleEdgeModal: () => set((state) => ({ isEdgeModalOpen: !state.isEdgeModalOpen })),
   toggleViewModal: () => set((state) => ({ isViewModalOpen: !state.isViewModalOpen })),
+  toggleBulkAddModal: () => set((state) => ({ isBulkAddModalOpen: !state.isBulkAddModalOpen })), // NEW
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
   triggerRefresh: () => set((state) => ({ refreshKey: state.refreshKey + 1 })),
 }));

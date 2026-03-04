@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useMemo } from "react";
 import { SigmaContainer, useSigma, useRegisterEvents } from "@react-sigma/core";
 import { createNodeImageProgram } from "@sigma/node-image";
 import "@react-sigma/core/lib/style.css";
@@ -6,16 +6,27 @@ import { supabase } from "../supabaseClient";
 import { useStore } from "../store";
 import { generateInitialsImage, generateProfileWithBorder, getGenderColor } from "../utils/imageUtils";
 
-// Simple helper to pluralize labels
+// A safe 1x1 transparent pixel to prevent WebGL texture panics before images load
+const SAFE_BLANK_IMAGE = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
+
+// Initialize WebGL program outside React to survive Hot Reloading
+let CustomImageProgram: any = null;
+try {
+  CustomImageProgram = createNodeImageProgram({
+    maxTextureSize: 2048,
+    padding: 0
+  });
+} catch (error) {
+  console.warn("WebGL node image program failed to initialize.", error);
+}
+
 const pluralize = (word: string) => {
   if (!word) return "";
   const lower = word.toLowerCase();
-  
   if (lower === "child") return "Children";
   if (lower === "person") return "People";
   if (lower === "man") return "Men";
   if (lower === "woman") return "Women";
-  
   if (lower.endsWith('s')) return word; 
   if (lower.endsWith('y') && !['a', 'e', 'i', 'o', 'u'].includes(lower.charAt(lower.length - 2))) {
     return word.slice(0, -1) + 'ies';
@@ -24,6 +35,12 @@ const pluralize = (word: string) => {
     return word + 'es';
   }
   return word + 's';
+};
+
+const parseSafeNumber = (val: any, fallback: number = 0): number => {
+  if (val === null || val === undefined || val === "") return fallback;
+  const num = Number(val);
+  return (Number.isFinite(num) && !Number.isNaN(num)) ? num : fallback;
 };
 
 const GraphManager = () => {
@@ -35,20 +52,30 @@ const GraphManager = () => {
   const selectedNodeId = useStore((state) => state.selectedNodeId);
   const setSelectedNodeId = useStore((state) => state.setSelectedNodeId);
 
-  const [networkData, setNetworkData] = useState<{nodes: any[], edges: any[]}>({ nodes: [], edges: [] });
+  const [networkData, setNetworkData] = useState<{nodes: any[], edges: any[], rootNodeId: string | null}>({ nodes: [], edges: [], rootNodeId: null });
   const [draggedNode, setDraggedNode] = useState<string | null>(null);
   
   const layoutCache = useRef(new Map<string, {x: number, y: number}>());
-  
-  // Cache tracks visual updates so we don't infinitely redraw
   const renderedPhotos = useRef(new Map<string, string>());
 
   useEffect(() => {
     async function fetchAndLoadData() {
       if (!currentGraphId) return;
-      const { data: nodesData } = await supabase.from("nodes").select("*").eq("graph_id", currentGraphId);
-      const { data: edgesData } = await supabase.from("edges").select("*").eq("graph_id", currentGraphId);
-      setNetworkData({ nodes: nodesData || [], edges: edgesData || [] });
+      try {
+        const [graphRes, nodesRes, edgesRes] = await Promise.all([
+          supabase.from("graphs").select("root_node_id").eq("id", currentGraphId).single(),
+          supabase.from("nodes").select("*").eq("graph_id", currentGraphId),
+          supabase.from("edges").select("*").eq("graph_id", currentGraphId)
+        ]);
+
+        setNetworkData({ 
+          nodes: nodesRes.data || [], 
+          edges: edgesRes.data || [],
+          rootNodeId: graphRes.data?.root_node_id || null
+        });
+      } catch (err) {
+        console.error("Supabase Fetch Error:", err);
+      }
     }
     fetchAndLoadData();
   }, [currentGraphId, refreshKey]);
@@ -70,11 +97,7 @@ const GraphManager = () => {
       if (!draggedNode) return;
       e.preventDefault();
       const rect = sigma.getContainer().getBoundingClientRect();
-      const pos = sigma.viewportToGraph({
-        x: e.clientX - rect.left,
-        y: e.clientY - rect.top,
-      });
-      
+      const pos = sigma.viewportToGraph({ x: e.clientX - rect.left, y: e.clientY - rect.top });
       sigma.getGraph().setNodeAttribute(draggedNode, "x", pos.x);
       sigma.getGraph().setNodeAttribute(draggedNode, "y", pos.y);
       layoutCache.current.set(String(draggedNode), { x: pos.x, y: pos.y });
@@ -101,10 +124,9 @@ const GraphManager = () => {
     };
   }, [draggedNode, sigma]);
 
-  // THE HIGH-PERFORMANCE RENDERER
   useEffect(() => {
     const graph = sigma.getGraph();
-    const { nodes, edges } = networkData;
+    const { nodes, edges, rootNodeId } = networkData;
     if (nodes.length === 0) return;
 
     const connectedNodeIds = new Set<string>();
@@ -118,128 +140,135 @@ const GraphManager = () => {
     const existingNodes = new Set(graph.nodes());
 
     nodes.forEach((node) => {
-      const nodeIdStr = String(node.id);
-      existingNodes.delete(nodeIdStr); 
+      try {
+        const nodeIdStr = String(node.id);
+        existingNodes.delete(nodeIdStr); 
 
-      const isSelected = selectedNodeId === nodeIdStr;
-      const isNeighbor = connectedNodeIds.has(nodeIdStr);
-      const isDimmed = selectedNodeId !== null && !isSelected && !isNeighbor;
+        const isRoot = String(rootNodeId) === nodeIdStr;
+        const isSelected = selectedNodeId === nodeIdStr;
+        const isNeighbor = connectedNodeIds.has(nodeIdStr);
+        const isDimmed = selectedNodeId !== null && !isSelected && !isNeighbor;
 
-      // ---- AUTO-HEAL LEGACY COORDINATES ----
-      let dbX = node.layout_x;
-      let dbY = node.layout_y;
-      
-      // If a node is trapped in the old 0-10 microscopic bounding box, flag it for rescue
-      const isLegacyTrapped = (dbX !== null && dbX >= 0 && dbX <= 10 && dbY !== null && dbY >= 0 && dbY <= 10);
-
-      let x, y;
-      if (layoutCache.current.has(nodeIdStr) && !isLegacyTrapped) {
-        const cached = layoutCache.current.get(nodeIdStr)!;
-        x = cached.x;
-        y = cached.y;
-      } else {
-        // Explode legacy nodes into the new 1000x1000 scale, otherwise assign random for purely new nulls
-        x = isLegacyTrapped ? ((Math.random() * 1000) - 500) : (dbX ?? ((Math.random() * 1000) - 500));
-        y = isLegacyTrapped ? ((Math.random() * 1000) - 500) : (dbY ?? ((Math.random() * 1000) - 500));
-        layoutCache.current.set(nodeIdStr, { x, y });
+        let dbX = parseSafeNumber(node.layout_x, NaN);
+        let dbY = parseSafeNumber(node.layout_y, NaN);
         
-        // Save the rescued coordinates to Supabase so they don't get trapped again on refresh!
-        if (isLegacyTrapped || dbX === null) {
-           supabase.from("nodes").update({ layout_x: x, layout_y: y }).eq("id", node.id).then();
-        }
-      }
-      // --------------------------------------
+        const isLegacyTrapped = (!isRoot && !Number.isNaN(dbX) && dbX >= 0 && dbX <= 10 && !Number.isNaN(dbY) && dbY >= 0 && dbY <= 10);
 
-      const baseColor = getGenderColor(node.sex);
-      const finalColor = isDimmed ? baseColor + "80" : baseColor;
-      const targetSize = isSelected ? 35 : 25;
-
-      // SURGICAL NODE UPDATES
-      if (!graph.hasNode(nodeIdStr)) {
-        const fallbackImage = generateInitialsImage(node.full_name, node.sex);
-        graph.addNode(nodeIdStr, {
-          x, y,
-          size: targetSize,
-          label: node.full_name || "Unknown",
-          color: finalColor,
-          type: "image",
-          image: fallbackImage,
-        });
-      } else {
-        graph.setNodeAttribute(nodeIdStr, "size", targetSize);
-        graph.setNodeAttribute(nodeIdStr, "color", finalColor);
-        graph.setNodeAttribute(nodeIdStr, "label", node.full_name || "Unknown");
-        graph.setNodeAttribute(nodeIdStr, "x", x);
-        graph.setNodeAttribute(nodeIdStr, "y", y);
-      }
-
-      // SMART IMAGE CACHING - Tracks URL, Sex, AND Name!
-      const currentCacheKey = `${node.photo_url || ""}::${node.sex}::${node.full_name}`;
-      const previousCacheKey = renderedPhotos.current.get(nodeIdStr);
-
-      if (currentCacheKey !== previousCacheKey) {
-        renderedPhotos.current.set(nodeIdStr, currentCacheKey); 
-        
-        if (node.photo_url) {
-          generateProfileWithBorder(node.photo_url, node.sex).then((finalImageDataUrl) => {
-            if (graph.hasNode(nodeIdStr)) {
-              graph.setNodeAttribute(nodeIdStr, "image", finalImageDataUrl);
-            }
-          });
+        let x, y;
+        if (layoutCache.current.has(nodeIdStr) && !isLegacyTrapped) {
+          const cached = layoutCache.current.get(nodeIdStr)!;
+          x = cached.x;
+          y = cached.y;
         } else {
-          const fallbackImage = generateInitialsImage(node.full_name, node.sex);
-          if (graph.hasNode(nodeIdStr)) {
-             graph.setNodeAttribute(nodeIdStr, "image", fallbackImage);
+          const randomX = (Math.random() * 1000) - 500;
+          const randomY = (Math.random() * 1000) - 500;
+          
+          x = isLegacyTrapped ? randomX : (Number.isNaN(dbX) ? (isRoot ? 0 : randomX) : dbX);
+          y = isLegacyTrapped ? randomY : (Number.isNaN(dbY) ? (isRoot ? 0 : randomY) : dbY);
+          
+          layoutCache.current.set(nodeIdStr, { x, y });
+          
+          if (isLegacyTrapped || Number.isNaN(dbX)) {
+             supabase.from("nodes").update({ layout_x: x, layout_y: y }).eq("id", node.id).then();
           }
         }
+
+        const baseColor = getGenderColor(node.sex);
+        const finalColor = isDimmed ? baseColor + "80" : baseColor;
+        
+        // Root node gets bigger (60) when selected, otherwise 50. Normal nodes 35/25.
+        let targetSize = 25;
+        if (isRoot) targetSize = isSelected ? 60 : 50;
+        else targetSize = isSelected ? 35 : 25;
+
+        // Supply safe fallback image on mount
+        if (!graph.hasNode(nodeIdStr)) {
+          graph.addNode(nodeIdStr, {
+            x, y,
+            size: targetSize,
+            label: node.full_name || "Unknown",
+            color: finalColor,
+            type: CustomImageProgram ? "image" : "circle",
+            image: SAFE_BLANK_IMAGE, 
+          });
+        } else {
+          graph.setNodeAttribute(nodeIdStr, "size", targetSize);
+          graph.setNodeAttribute(nodeIdStr, "color", finalColor);
+          graph.setNodeAttribute(nodeIdStr, "label", node.full_name || "Unknown");
+          graph.setNodeAttribute(nodeIdStr, "x", x);
+          graph.setNodeAttribute(nodeIdStr, "y", y);
+          
+          // Re-enable image program if it was stripped
+          if (CustomImageProgram && graph.getNodeAttribute(nodeIdStr, "type") === "circle") {
+             graph.setNodeAttribute(nodeIdStr, "type", "image");
+          }
+        }
+
+        // Asynchronously inject real images once generated
+        const currentCacheKey = `${node.photo_url || ""}::${node.sex}::${node.full_name}`;
+        const previousCacheKey = renderedPhotos.current.get(nodeIdStr);
+
+        if (currentCacheKey !== previousCacheKey) {
+          renderedPhotos.current.set(nodeIdStr, currentCacheKey); 
+          
+          if (node.photo_url) {
+            generateProfileWithBorder(node.photo_url, node.sex).then((finalImageDataUrl) => {
+              if (graph.hasNode(nodeIdStr)) graph.setNodeAttribute(nodeIdStr, "image", finalImageDataUrl);
+            });
+          } else {
+            Promise.resolve(generateInitialsImage(node.full_name, node.sex)).then((fallbackImage) => {
+              if (graph.hasNode(nodeIdStr) && fallbackImage) graph.setNodeAttribute(nodeIdStr, "image", fallbackImage);
+            });
+          }
+        }
+      } catch (nodeErr) {
+        console.error("Node Rendering Error:", nodeErr);
       }
     });
 
     existingNodes.forEach(nodeId => graph.dropNode(nodeId));
-
     graph.clearEdges();
     
     edges.forEach((edge) => {
-      const sourceStr = String(edge.source);
-      const targetStr = String(edge.target);
-      
-      if (graph.hasNode(sourceStr) && graph.hasNode(targetStr)) {
-        let displayLabel = "";
-        let isSelectedEdge = false;
-        let isDimmedEdge = false;
-        let visualSource = sourceStr;
-        let visualTarget = targetStr;
+      try {
+        const sourceStr = String(edge.source);
+        const targetStr = String(edge.target);
+        
+        if (graph.hasNode(sourceStr) && graph.hasNode(targetStr)) {
+          let displayLabel = "";
+          let isSelectedEdge = false;
+          let isDimmedEdge = false;
+          let visualSource = sourceStr;
+          let visualTarget = targetStr;
 
-        if (!selectedNodeId) {
-          const forward = edge.label || edge.category;
-          const backward = edge.reverse_label;
-          
-          if (backward && forward.trim().toLowerCase() === backward.trim().toLowerCase()) {
-             displayLabel = pluralize(forward.trim());
+          if (!selectedNodeId) {
+            const forward = edge.label || edge.category;
+            const backward = edge.reverse_label;
+            if (backward && forward.trim().toLowerCase() === backward.trim().toLowerCase()) {
+               displayLabel = pluralize(forward.trim());
+            } else {
+               displayLabel = backward ? `${forward} / ${backward}` : forward;
+            }
+          } else if (sourceStr === selectedNodeId || targetStr === selectedNodeId) {
+            isSelectedEdge = true;
+            if (selectedNodeId === targetStr) {
+              visualSource = targetStr; visualTarget = sourceStr; 
+              displayLabel = edge.reverse_label || edge.category;
+            } else {
+              displayLabel = edge.label || edge.category;
+            }
           } else {
-             displayLabel = backward ? `${forward} / ${backward}` : forward;
+            isDimmedEdge = true;
           }
 
-        } else if (sourceStr === selectedNodeId || targetStr === selectedNodeId) {
-          isSelectedEdge = true;
-          if (selectedNodeId === targetStr) {
-            visualSource = targetStr; 
-            visualTarget = sourceStr; 
-            displayLabel = edge.reverse_label || edge.category;
-          } else {
-            displayLabel = edge.label || edge.category;
-          }
-        } else {
-          isDimmedEdge = true;
+          graph.addDirectedEdge(visualSource, visualTarget, {
+            size: isSelectedEdge ? 3.5 : (isDimmedEdge ? 1 : 2.5),
+            color: isSelectedEdge ? "#6b7280" : (isDimmedEdge ? "#f1f5f9" : "#9ca3af"),
+            label: displayLabel,
+            type: isSelectedEdge ? "arrow" : "line",
+          });
         }
-
-        graph.addDirectedEdge(visualSource, visualTarget, {
-          size: isSelectedEdge ? 3.5 : (isDimmedEdge ? 1 : 2.5),
-          color: isSelectedEdge ? "#6b7280" : (isDimmedEdge ? "#f1f5f9" : "#9ca3af"),
-          label: displayLabel,
-          type: isSelectedEdge ? "arrow" : "line",
-        });
-      }
+      } catch (edgeErr) {}
     });
 
   }, [networkData, selectedNodeId, sigma]);
@@ -247,44 +276,19 @@ const GraphManager = () => {
   return null;
 };
 
-// Module-level cache ensures WebGL context is requested strictly ONCE per page load.
-let cachedImageProgram: any = null;
-
 export default function NetworkGraph() {
-  const [sigmaSettings, setSigmaSettings] = useState<any>(null);
-
-  useEffect(() => {
-    if (!cachedImageProgram) {
-      try {
-        cachedImageProgram = createNodeImageProgram({
-          maxTextureSize: 2048,
-          padding: 0
-        });
-      } catch (error) {
-        console.warn("WebGL node image program failed to initialize. Falling back to default rendering.", error);
-      }
-    }
-
-    setSigmaSettings({
-      nodeProgramClasses: cachedImageProgram ? { image: cachedImageProgram } : {},
-      defaultNodeType: cachedImageProgram ? "image" : "circle",
-      renderEdgeLabels: true,
-      edgeLabelSize: 14, 
-      edgeLabelColor: { color: "#4b5563" },
-      defaultEdgeType: "line",
-      allowInvalidContainer: true
-    });
-  }, []);
-
-  if (!sigmaSettings) {
-    return null;
-  }
+  const sigmaSettings: any = useMemo(() => ({
+    nodeProgramClasses: CustomImageProgram ? { image: CustomImageProgram } : {},
+    defaultNodeType: CustomImageProgram ? "image" : "circle",
+    renderEdgeLabels: true,
+    edgeLabelSize: 14, 
+    edgeLabelColor: { color: "#4b5563" },
+    defaultEdgeType: "line",
+    allowInvalidContainer: true 
+  }), []);
 
   return (
-    <SigmaContainer
-      style={{ height: "100%", width: "100%" }}
-      settings={sigmaSettings}
-    >
+    <SigmaContainer style={{ height: "100%", width: "100%" }} settings={sigmaSettings}>
       <GraphManager />
     </SigmaContainer>
   );

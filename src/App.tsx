@@ -5,7 +5,9 @@ import Sidebar from "./components/Sidebar";
 import NodeDetailsModal from "./components/NodeDetailsModal"; 
 import AddEdgeModal from "./components/AddEdgeModal";
 import ViewNodeModal from "./components/ViewNodeModal";
-import BulkAddModal from "./components/BulkAddModal"; // NEW
+import BulkAddModal from "./components/BulkAddModal"; 
+import BulkConnectModal from "./components/BulkConnectModal"; 
+import AddPersonModal from "./components/AddPersonModal"; // NEW: Imported the AddPersonModal
 import { useStore } from "./store";
 import { supabase } from "./supabaseClient";
 
@@ -18,7 +20,9 @@ export default function App() {
     openNodeModal, 
     toggleEdgeModal, 
     toggleViewModal,
-    toggleBulkAddModal, // NEW
+    toggleBulkAddModal,
+    toggleBulkConnectModal,
+    toggleAddPersonModal, // NEW: Added to destructuring
     selectedNodeId 
   } = useStore();
 
@@ -63,9 +67,11 @@ export default function App() {
         {/* OVERLAYS & MODALS */}
         <Sidebar />
         <NodeDetailsModal />
+        <AddPersonModal /> {/* NEW: Added to the render tree */}
         <AddEdgeModal />
         <ViewNodeModal />
-        <BulkAddModal /> {/* NEW */}
+        <BulkAddModal />
+        <BulkConnectModal /> 
 
         {/* FLOATING ACTION BUTTONS (CONTEXTUAL) */}
         {currentGraphId && (
@@ -82,7 +88,7 @@ export default function App() {
                   <span>📝</span> Bulk Add
                 </button>
                 <button
-                  onClick={() => openNodeModal('add')}
+                  onClick={toggleAddPersonModal} // NEW: Changed to use the AddPersonModal
                   className="px-5 py-3 bg-blue-600 rounded-full shadow-lg flex items-center gap-2 text-white font-semibold hover:bg-blue-700 hover:scale-105 transition-transform"
                   title="Add Single Person"
                 >
@@ -90,7 +96,7 @@ export default function App() {
                 </button>
               </>
             ) : (
-              /* If a node IS selected, show View, Connect, and Edit buttons */
+              /* If a node IS selected, show contextual buttons */
               <>
                 <button
                   onClick={toggleViewModal}
@@ -98,12 +104,24 @@ export default function App() {
                 >
                   <span>👀</span> View Details
                 </button>
+                
+                {/* SINGLE CONNECT */}
                 <button
                   onClick={toggleEdgeModal}
                   className="px-5 py-3 bg-purple-600 rounded-full shadow-lg flex items-center gap-2 text-white font-semibold hover:bg-purple-700 hover:scale-105 transition-transform"
                 >
                   <span>🔗</span> Connect
                 </button>
+
+                {/* BULK CONNECT */}
+                <button
+                  onClick={toggleBulkConnectModal}
+                  className="px-5 py-3 bg-pink-600 rounded-full shadow-lg flex items-center gap-2 text-white font-semibold hover:bg-pink-700 hover:scale-105 transition-transform"
+                >
+                  <span>🔀</span> Bulk Connect
+                </button>
+
+                {/* EDIT */}
                 <button
                   onClick={() => openNodeModal('edit')}
                   className="px-5 py-3 bg-gray-800 rounded-full shadow-lg flex items-center gap-2 text-white font-semibold hover:bg-gray-900 hover:scale-105 transition-transform"

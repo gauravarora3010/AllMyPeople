@@ -2,6 +2,14 @@ import { useState, useEffect } from "react";
 import { supabase } from "../supabaseClient";
 import { useStore } from "../store";
 
+// Helper to extract up to 2 initials (e.g., "John Doe" -> "JD", "Jane" -> "JA")
+const getInitials = (name: string) => {
+  if (!name) return "";
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].substring(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+};
+
 export default function ViewNodeModal() {
   const { isViewModalOpen, toggleViewModal, selectedNodeId } = useStore();
   const [node, setNode] = useState<any>(null);
@@ -25,9 +33,24 @@ export default function ViewNodeModal() {
         
         {/* Header Profile */}
         <div className="flex flex-col items-center text-center mb-6 mt-4">
-          <div className="w-20 h-20 bg-blue-100 rounded-full flex items-center justify-center text-blue-600 font-bold text-2xl mb-3 shadow-inner">
-            {node.full_name?.charAt(0)}
-          </div>
+          
+          {/* SHOW PICTURE IF IT EXISTS, OTHERWISE SHOW COLORED INITIALS */}
+          {node.photo_url ? (
+            <img 
+              src={node.photo_url} 
+              alt="Profile" 
+              className="w-20 h-20 rounded-full object-cover mb-3 shadow-md border-2 border-white"
+            />
+          ) : (
+            <div className={`w-20 h-20 rounded-full flex items-center justify-center font-bold text-2xl mb-3 shadow-inner text-white ${
+              node.sex === 'Female' ? 'bg-pink-500' : 
+              node.sex === 'Male' ? 'bg-blue-500' : 
+              'bg-emerald-500'
+            }`}>
+              {getInitials(node.full_name)}
+            </div>
+          )}
+
           <h2 className="text-2xl font-bold text-gray-800">{node.full_name}</h2>
           {node.profession && <p className="text-sm text-gray-500 font-medium">{node.profession}</p>}
         </div>
@@ -36,8 +59,8 @@ export default function ViewNodeModal() {
         <div className="space-y-4 text-sm text-gray-700">
           {(node.location || node.dob) && (
             <div className="flex justify-around bg-gray-50 p-3 rounded-lg border border-gray-100">
-              {node.location && <div className="text-center"><span>📍</span> <span className="block font-semibold">{node.location}</span></div>}
-              {node.dob && <div className="text-center"><span>🎂</span> <span className="block font-semibold">{new Date(node.dob).toLocaleDateString()}</span></div>}
+              {node.location && <div className="text-center"><span title="Location">📍</span> <span className="block font-semibold">{node.location}</span></div>}
+              {node.dob && <div className="text-center"><span title="Date of Birth">🎂</span> <span className="block font-semibold">{new Date(node.dob).toLocaleDateString()}</span></div>}
             </div>
           )}
 

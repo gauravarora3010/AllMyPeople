@@ -3,7 +3,18 @@ import { supabase } from "../supabaseClient";
 import { useStore } from "../store";
 
 export default function NodeDetailsModal() {
-  const { isNodeModalOpen, closeNodeModal, nodeModalMode, currentGraphId, selectedNodeId, triggerRefresh, userId } = useStore();
+  const { 
+    isNodeModalOpen, 
+    closeNodeModal, 
+    nodeModalMode, 
+    currentGraphId, 
+    selectedNodeId, 
+    setSelectedNodeId, 
+    triggerRefresh, 
+    userId,
+    draftName,       // <-- Retrieve draftName from store
+    setDraftName     // <-- Retrieve setter to clear it later
+  } = useStore();
   
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
@@ -50,13 +61,22 @@ export default function NodeDetailsModal() {
         }
       };
       fetchNode();
-    } else {
-      setStep(1);
-      setFullName(""); setNickname(""); setSex("Other"); setDob(""); setLocation(""); 
+    } else if (isNodeModalOpen && nodeModalMode === 'add') {
+      // Pick up the draft name from the AddPersonModal
+      setFullName(draftName || "");
+      setStep(draftName ? 2 : 1); // Skip step 1 if draft name exists!
+      
+      setNickname(""); setSex("Other"); setDob(""); setLocation(""); 
       setProfession(""); setPhotoUrl(""); setNotes(""); setMobile(""); setPhone(""); 
       setEmail(""); setInstagram(""); setFacebook("");
     }
-  }, [isNodeModalOpen, nodeModalMode, selectedNodeId]);
+  }, [isNodeModalOpen, nodeModalMode, selectedNodeId, draftName]);
+
+  // Clean up draftName when modal closes
+  const handleClose = () => {
+    setDraftName("");
+    closeNodeModal();
+  };
 
   if (!isNodeModalOpen) return null;
 
@@ -65,7 +85,6 @@ export default function NodeDetailsModal() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // 5MB limit check (5 * 1024 * 1024 bytes)
     if (file.size > 5242880) {
       alert("Image size must be less than 5MB");
       return;
@@ -76,24 +95,14 @@ export default function NodeDetailsModal() {
     try {
       const fileExt = file.name.split('.').pop();
       const fileName = `${userId}/${Date.now()}.${fileExt}`;
-      
-      // Dynamically get the bucket name from environment variables
       const bucketName = import.meta.env.VITE_STORAGE_BUCKET;
 
-      if (!bucketName) {
-        throw new Error("Storage bucket name is missing in environment variables.");
-      }
+      if (!bucketName) throw new Error("Storage bucket name is missing in environment variables.");
 
-      const { error: uploadError } = await supabase.storage
-        .from(bucketName)
-        .upload(fileName, file, { upsert: true });
-
+      const { error: uploadError } = await supabase.storage.from(bucketName).upload(fileName, file, { upsert: true });
       if (uploadError) throw uploadError;
 
-      const { data: publicUrlData } = supabase.storage
-        .from(bucketName)
-        .getPublicUrl(fileName);
-
+      const { data: publicUrlData } = supabase.storage.from(bucketName).getPublicUrl(fileName);
       setPhotoUrl(publicUrlData.publicUrl);
     } catch (error: any) {
       alert("Error uploading image: " + error.message);
@@ -124,6 +133,7 @@ export default function NodeDetailsModal() {
     };
 
     let error;
+    // THIS is where the new person is actually inserted into the database!
     if (nodeModalMode === 'add') {
       const { error: insertError } = await supabase.from("nodes").insert({
         ...payload,
@@ -139,11 +149,36 @@ export default function NodeDetailsModal() {
       error = updateError;
     }
 
-    if (error) alert("Error saving person: " + error.message);
-    else {
+    if (error) {
+      alert("Error saving person: " + error.message);
+    } else {
       triggerRefresh();
-      closeNodeModal();
+      handleClose(); // Cleans up draft state and closes
     }
+    setLoading(false);
+  };
+
+  const handleDelete = async () => {
+    if (!selectedNodeId) return;
+    
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this person? This will permanently remove them and all their connections."
+    );
+    
+    if (!confirmed) return;
+
+    setLoading(true);
+
+    const { error } = await supabase.from('nodes').delete().eq('id', selectedNodeId);
+
+    if (error) {
+      alert("Error deleting person: " + error.message);
+    } else {
+      setSelectedNodeId(null); 
+      triggerRefresh();        
+      handleClose();        
+    }
+    
     setLoading(false);
   };
 
@@ -154,7 +189,7 @@ export default function NodeDetailsModal() {
           <h2 className="text-xl font-bold text-gray-800">
             {nodeModalMode === 'add' ? "Add New Person" : "Edit Details"}
           </h2>
-          <button onClick={closeNodeModal} className="text-gray-400 hover:text-gray-800 text-2xl leading-none">&times;</button>
+          <button onClick={handleClose} className="text-gray-400 hover:text-gray-800 text-2xl leading-none">&times;</button>
         </div>
 
         <form onSubmit={handleSave} className="flex flex-col gap-4">
@@ -166,7 +201,7 @@ export default function NodeDetailsModal() {
                 <input type="text" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="e.g. Jane Doe" className="w-full border border-gray-300 rounded-md p-3" autoFocus required />
               </div>
               <div className="flex justify-end gap-3 mt-4">
-                <button type="button" onClick={closeNodeModal} className="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200 text-sm">Cancel</button>
+                <button type="button" onClick={handleClose} className="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200 text-sm">Cancel</button>
                 <button type="button" onClick={() => fullName.trim() && setStep(2)} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm">Next: Add Details &rarr;</button>
               </div>
             </div>
@@ -175,7 +210,6 @@ export default function NodeDetailsModal() {
           {step === 2 && (
             <div className="flex flex-col gap-4">
               
-              {/* Profile Picture Upload Section */}
               <div className="flex items-center gap-4 bg-gray-50 p-4 rounded-lg border border-gray-200">
                 <div className="w-16 h-16 rounded-full bg-gray-200 border-2 border-white shadow-sm overflow-hidden flex-shrink-0 flex items-center justify-center">
                   {photoUrl ? (
@@ -197,7 +231,6 @@ export default function NodeDetailsModal() {
                 </div>
               </div>
 
-              {/* Basic Info */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-gray-600 mb-1">Full Name *</label>
@@ -235,7 +268,6 @@ export default function NodeDetailsModal() {
                 </div>
               </div>
 
-              {/* Contact Info (JSONB) */}
               <div className="p-3 bg-gray-50 border border-gray-100 rounded-lg space-y-3">
                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-wider">Contact Info</h3>
                 <div className="grid grid-cols-2 gap-4">
@@ -254,7 +286,6 @@ export default function NodeDetailsModal() {
                 </div>
               </div>
 
-              {/* Social Links (JSONB) */}
               <div className="p-3 bg-gray-50 border border-gray-100 rounded-lg grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs text-gray-600 mb-1">📸 Instagram Username</label>
@@ -271,12 +302,31 @@ export default function NodeDetailsModal() {
                 <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={3} className="w-full border border-gray-300 rounded-md p-2 text-sm" />
               </div>
 
-              <div className="flex justify-end gap-3 mt-4">
-                <button type="button" onClick={closeNodeModal} className="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200 text-sm">Cancel</button>
-                <button type="submit" disabled={loading || uploadingImage} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-semibold disabled:bg-blue-400">
-                  {loading ? "Saving..." : "Save Person"}
-                </button>
+              <div className="flex justify-between items-center mt-6 pt-4 border-t border-gray-100">
+                
+                {/* Delete Button (Only shows in Edit mode!) */}
+                <div>
+                  {nodeModalMode === 'edit' && (
+                    <button
+                      type="button"
+                      onClick={handleDelete}
+                      disabled={loading || uploadingImage}
+                      className="px-4 py-2 text-sm font-semibold text-red-600 bg-red-50 rounded-md hover:bg-red-100 transition disabled:opacity-50"
+                    >
+                      🗑️ Delete Person
+                    </button>
+                  )}
+                </div>
+
+                {/* Cancel & Save Buttons */}
+                <div className="flex gap-3">
+                  <button type="button" onClick={handleClose} className="px-4 py-2 bg-gray-100 rounded-md hover:bg-gray-200 text-sm">Cancel</button>
+                  <button type="submit" disabled={loading || uploadingImage} className="px-6 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm font-semibold disabled:bg-blue-400">
+                    {loading ? "Saving..." : "Save Person"}
+                  </button>
+                </div>
               </div>
+
             </div>
           )}
         </form>

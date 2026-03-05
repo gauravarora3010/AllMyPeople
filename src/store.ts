@@ -13,6 +13,7 @@ interface AppState {
   isBulkAddModalOpen: boolean; 
   isBulkConnectModalOpen: boolean;
   isAddPersonModalOpen: boolean;
+  isSmartSuggestModalOpen: boolean; // <-- NEW
   refreshKey: number;
 
   // Temporary State for passing data between modals
@@ -32,7 +33,8 @@ interface AppState {
   toggleBulkAddModal: () => void;
   toggleBulkConnectModal: () => void;
   toggleAddPersonModal: () => void; 
-  setDraftName: (name: string) => void; // <-- Added setter
+  toggleSmartSuggestModal: () => void; // <-- NEW
+  setDraftName: (name: string) => void; 
   setSelectedNodeId: (id: string | null) => void;
   triggerRefresh: () => void;
 }
@@ -48,8 +50,9 @@ export const useStore = create<AppState>((set) => ({
   isBulkAddModalOpen: false,
   isBulkConnectModalOpen: false, 
   isAddPersonModalOpen: false, 
+  isSmartSuggestModalOpen: false, // <-- NEW
   refreshKey: 0,
-  draftName: "", // <-- Added default
+  draftName: "", 
   selectedNodeId: null,
 
   setUserId: (id) => set({ userId: id }),
@@ -62,7 +65,8 @@ export const useStore = create<AppState>((set) => ({
   toggleBulkAddModal: () => set((state) => ({ isBulkAddModalOpen: !state.isBulkAddModalOpen })),
   toggleBulkConnectModal: () => set((state) => ({ isBulkConnectModalOpen: !state.isBulkConnectModalOpen })), 
   toggleAddPersonModal: () => set((state) => ({ isAddPersonModalOpen: !state.isAddPersonModalOpen })), 
-  setDraftName: (name) => set({ draftName: name }), // <-- Added setter
+  toggleSmartSuggestModal: () => set((state) => ({ isSmartSuggestModalOpen: !state.isSmartSuggestModalOpen })), // <-- NEW
+  setDraftName: (name) => set({ draftName: name }), 
   setSelectedNodeId: (id) => set({ selectedNodeId: id }),
   triggerRefresh: () => set((state) => ({ refreshKey: state.refreshKey + 1 })),
 }));

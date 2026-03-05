@@ -61,6 +61,10 @@ const GraphManager = () => {
   useEffect(() => {
     async function fetchAndLoadData() {
       if (!currentGraphId) return;
+      
+      // FIX: Wipe local layout memory on refresh so Auto Layout can snap nodes to new positions!
+      layoutCache.current.clear(); 
+      
       try {
         const [graphRes, nodesRes, edgesRes] = await Promise.all([
           supabase.from("graphs").select("root_node_id").eq("id", currentGraphId).single(),
@@ -198,13 +202,11 @@ const GraphManager = () => {
           graph.setNodeAttribute(nodeIdStr, "x", x);
           graph.setNodeAttribute(nodeIdStr, "y", y);
           
-          // Re-enable image program if it was stripped
           if (CustomImageProgram && graph.getNodeAttribute(nodeIdStr, "type") === "circle") {
              graph.setNodeAttribute(nodeIdStr, "type", "image");
           }
         }
 
-        // Asynchronously inject real images once generated
         const currentCacheKey = `${node.photo_url || ""}::${node.sex}::${node.full_name}`;
         const previousCacheKey = renderedPhotos.current.get(nodeIdStr);
 
